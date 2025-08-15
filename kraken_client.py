@@ -61,6 +61,24 @@ def quote_from_symbol(symbol: str) -> str:
     if s.endswith("USD"):  return "ZUSD"  # Kraken USD balance key
     return "ZUSD"
 
+# --- Balance asset key helpers (for /Balance keys)
+_BASE_BAL_KEY = {
+    "BTC": "XXBT",  # Kraken's balance key for BTC
+    "XBT": "XXBT",
+    "ETH": "XETH",  # Kraken's balance key for ETH
+}
+
+def base_from_symbol(symbol: str) -> str:
+    """
+    Map a symbol like 'ETHUSDT' or 'XBTUSD' to the base asset balance key
+    used by Kraken's /Balance endpoint.
+    """
+    s = symbol.replace(":", "").replace("/", "").upper()  # e.g., ETHUSDT
+    # crude split: if it ends with USDT -> strip 4 chars, else strip 3 (USD)
+    base = s[:-4] if s.endswith("USDT") else s[:-3]
+    return _BASE_BAL_KEY.get(base, base)
+
+
 # ---------- market data / balances ----------
 def get_pair_info(symbol: str) -> Dict:
     pair = normalize_pair(symbol)
