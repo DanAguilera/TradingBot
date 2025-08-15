@@ -1,7 +1,6 @@
 # --- Secrets ---
 .env
 API_keys.txt
-*.txt
 
 # --- Python cache ---
 __pycache__/
