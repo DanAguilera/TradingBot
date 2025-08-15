@@ -76,11 +76,15 @@ def tv_webhook():
     global _last_sig
     try:
         payload = request.get_json(force=True)
-        print("📩 Incoming:", payload)
 
-        # Secret check
         if SHARED_SECRET and payload.get("secret") != SHARED_SECRET:
             return jsonify({"ok": False, "err": "bad secret"}), 401
+
+        # Safe log: remove/obscure secret before printing
+        payload_log = dict(payload)
+        if "secret" in payload_log:
+            payload_log["secret"] = "***"
+        print("📩 Incoming:", payload_log)
 
         # Core fields
         symbol = payload["symbol"].replace(":", "").replace("/", "").upper()
