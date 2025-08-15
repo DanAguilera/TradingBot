@@ -3,13 +3,17 @@ from flask import Flask, request, jsonify
 import os, time, csv
 from typing import Tuple
 from dotenv import load_dotenv
+
 from kraken_client import (
-    get_pair_info, get_ticker_price, get_balance,
-    place_market_with_conditional_close, quote_from_symbol,
+    get_pair_info,
+    get_ticker_price,
+    get_balance,
+    place_market_with_conditional_close,
+    quote_from_symbol,
+    base_from_symbol,   # <-- use the helper from kraken_client
 )
 
 load_dotenv()
-
 app = Flask(__name__)
 
 # ----------- CONFIG -----------
@@ -34,32 +38,35 @@ def write_log(row: dict):
     exists = os.path.exists(LOG_FILE)
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if not exists: w.writeheader()
+        if not exists:
+            w.writeheader()
         w.writerow(row)
 
-def compute_buy_qty_equity_pct(symbol: str, equity_quote: float, entry_price: float) -> Tuple[float, float]:
-    """BUY sizing: % of quote wallet. Returns (qty_base, notional_quote)."""
-    info = get_pair_info(symbol)
-    target_notional = equity_quote * EQUITY_PCT
-    raw_qty = max(0.0, target_notional / entry_price)
-    qty = raw_qty if raw_qty >= info["ordermin"] else 0.0
-    qty = float(f"{qty:.{info['lot_decimals']}f}")
-    return qty, qty * entry_price
+def compute_qty_side_aware(symbol: str, side: str, price: float) -> Tuple[float, float]:
+    """
+    BUY  -> spend EQUITY_PCT of quote balance (USDT/ZUSD) -> base qty
+    SELL -> sell 100% of base balance (spot flatten)      -> base qty
+    Returns (qty_base, notional_quote)
+    """
+    info     = get_pair_info(symbol)
+    lot_dec  = info["lot_decimals"]
+    ordermin = info["ordermin"]
 
-def base_from_symbol(symbol: str) -> str:
-    s = symbol.replace(":","").replace("/","").upper()
-    if s.startswith("ETH"): return "XETH"   # Kraken base key for ETH
-    if s.startswith("BTC") or s.startswith("XBT"): return "XXBT"
-    return "XETH"  # fallback
+    if side == "buy":
+        quote_key       = quote_from_symbol(symbol)      # 'USDT' or 'ZUSD'
+        quote_balance   = get_balance(quote_key)         # in quote units
+        target_notional = quote_balance * EQUITY_PCT
+        raw_qty         = target_notional / price
+    else:
+        base_key  = base_from_symbol(symbol)             # e.g., 'XETH', 'XXBT'
+        raw_qty   = get_balance(base_key)
+        target_notional = raw_qty * price
 
-def compute_sell_qty_from_base(symbol: str) -> float:
-    """SELL sizing for spot: sell what you hold in base asset (no shorting)."""
-    info = get_pair_info(symbol)
-    base_key = base_from_symbol(symbol)
-    base_bal = get_balance(base_key)  # base units (e.g., ETH amount)
-    if base_bal <= 0:
-        return 0.0
-    return float(f"{base_bal:.{info['lot_decimals']}f}")
+    # Enforce Kraken base minimum + lot rounding
+    qty = 0.0 if raw_qty < ordermin else raw_qty
+    qty = float(f"{qty:.{lot_dec}f}")
+    notional = qty * price
+    return qty, notional
 
 # ----------- Route -----------
 @app.post("/webhook")
@@ -74,13 +81,14 @@ def tv_webhook():
             return jsonify({"ok": False, "err": "bad secret"}), 401
 
         # Core fields
-        symbol = payload["symbol"].replace(":","").replace("/","").upper()
+        symbol = payload["symbol"].replace(":", "").replace("/", "").upper()
         side   = str(payload.get("side","")).lower()  # "buy" / "sell"
 
         # Accept BOTH schemas: new(sl/tp) OR legacy(sl_long/tp_long/sl_short/tp_short)
         def to_f(x):
             try: return float(x)
             except: return 0.0
+
         sl = to_f(payload.get("sl"))
         tp = to_f(payload.get("tp"))
         if sl == 0.0 and tp == 0.0:
@@ -98,15 +106,7 @@ def tv_webhook():
 
         # Price & sizing
         entry_price = get_ticker_price(symbol)
-
-        if side == "buy":
-            quote_key   = quote_from_symbol(symbol)  # 'USDT' or 'ZUSD'
-            equity      = get_balance(quote_key)
-            qty, notional = compute_buy_qty_equity_pct(symbol, equity, entry_price)
-        else:
-            # SELL on spot = flatten using base balance (no short)
-            qty = compute_sell_qty_from_base(symbol)
-            notional = qty * entry_price
+        qty, notional = compute_qty_side_aware(symbol, side, entry_price)
 
         print(f"→ parsed side={side} sl={sl} tp={tp} price={entry_price} qty={qty} notional=${notional:.2f}")
 
@@ -140,6 +140,7 @@ def tv_webhook():
         return jsonify({"ok": False, "err": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","5000")))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
+
 
 
