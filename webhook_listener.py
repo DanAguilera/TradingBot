@@ -20,7 +20,9 @@ app = Flask(__name__)
 EQUITY_PCT       = float(os.getenv("EQUITY_PCT", "0.30"))   # 30% of wallet for BUYS
 MIN_NOTIONAL_USD = float(os.getenv("MIN_NOTIONAL_USD", "10"))
 DEDUP_WINDOW_SEC = float(os.getenv("DEDUP_WINDOW_SEC", "8"))
-SHARED_SECRET    = os.getenv("SHARED_SECRET", "gearsofwar4life")
+SHARED_SECRET = os.getenv("SHARED_SECRET")
+if not SHARED_SECRET:
+    raise RuntimeError("SHARED_SECRET missing in environment (.env)")
 LOG_FILE         = "trades.csv"
 
 # ----------- STATE -----------
